@@ -7,26 +7,115 @@ output: html_document
 
 ```{r setup, include=FALSE}
 library(dataRetrieval)
+library(tidyverse)
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## R Markdown
+## Retrieval of Water Quality Summaries for Clinton River and St. Joseph River
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
 
-```{r get_sediment_data}
+```{r get_data_summary}
 
-summary(cars)
+# 04165500 Clinton River at Mt. Clemens
+if(file.exists("site/04165500/qw_summary_04165500.RData")){
+  load('site/04165500/qw_summary_04165500.RData')
+}else {
+  qw_summary_04165500      <- whatNWISdata( siteNumbers = '04165500', service = 'qw' )
+  save(qw_summary_04165500, file = "site/04165500/qw_summary_04165500.RData")
+}
+
+# 04101500 St. Joseph River at Niles, MI
+if(file.exists("site/04101500/qw_summary_04101500.RData")){
+  load("site/04101500/qw_summary_04101500.RData")
+}else {
+  qw_summary_04101500      <- whatNWISdata( siteNumbers = '04101500', service = 'qw' )
+  save(qw_summary_04101500, file = "site/04101500/qw_summary_04101500.RData")
+}
+
+# Read parameter codes downloaded from web url 
+# https://nwis.waterdata.usgs.gov/nwis/pmcodes/pmcodes?radio_pm_search=param_group&pm_group=All+--+include+all+parameter+groups&pm_search=&casrn_search=&srsname_search=&format=rdb&show=parameter_group_nm&show=parameter_nm&show=casrn&show=srsname&show=parameter_units
+
+pmcodes <- read.csv(file = 'data/pmcodes.txt', sep = '\t', header = TRUE,
+                    comment.char = "#", colClasses = c('character'))
+
+# Get indices of sorted parameter codes 
+tmp_ndx <- order(pmcodes$parameter_cd)
+# Re-order pmcodes to sorted values
+pmcodes <- pmcodes[tmp_ndx, ]
+
+
 ```
 
-## Including Plots
+## Inital Processing of Data Summaries to find High Frequency Parameters
 
-You can also embed plots, for example:
+```{r init_process}
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+# Find parameters that have been sampled 200 or more times and are not missing para_cd
+qw_summary_04165500_200  <- qw_summary_04165500[ which( qw_summary_04165500$count_nu >= 200 & !is.na(qw_summary_04165500$parm_cd)),]
+
+# Find indices of parameter codes that have been sampled in all parameter codes
+ndx_pmcodes <- which(pmcodes$parameter_cd %in% qw_summary_04165500_200$parm_cd)
+
+# Populate fields with descriptive parameter info
+qw_summary_04165500_200$group_nm <- pmcodes$parameter_group_nm[ndx_pmcodes]
+qw_summary_04165500_200$parm_nm  <- pmcodes$parameter_nm[ndx_pmcodes]
+qw_summary_04165500_200$srsname  <- pmcodes$srsname[ndx_pmcodes]
+
+# Keep !'informational' parameter_group_nm
+ndx_keep <- which(qw_summary_04165500_200$group_nm != 'Information')
+qw_summary_04165500_200 <- qw_summary_04165500_200[ ndx_keep, ]
+
+
+```
+
+## Retrieve Selected Water Quality Parameters for Field Samples 
+
+
+Angela Brennan suggests that either turbidity or Specific conductance might be used to estimate SSC or Ortho-P
+
+
+
+```{r get_qw_data, }
+
+site_ids    <- c('04101500', '04165500')
+# Parameters:   SSC      Ortho-P  SC        Flow      Stage   H20_temp
+parameterCd <- c('80154', '00671', '00095', '00061', '00065', '00010')
+
+if( file.exists("data/rawNWISSqwData.RData")){
+  load("data/rawNWISqwData.RData")
+} else{
+rawNWISqwData          <- readNWISqw(site_ids,parameterCd,reshape=FALSE)
+save(rawNWISqwData, file = "data/rawNWISqwData.RData")
+}
+
 ```
 
 Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+
+```{r plot_series, fig.height= 20 }
+
+rawNWISqwData %>% 
+  filter( samp_type_cd == '9' & medium_cd == 'WS') %>% 
+  filter( sample_dt > as.Date('2010-10-01') & site_no == '04101500' ) %>% 
+  select(sample_dt, parm_cd, result_va) %>% 
+  ggplot( aes( x = sample_dt, y = result_va, group = parm_cd)) +
+  geom_point() +
+  facet_wrap(~parm_cd, ncol = 1, scales = 'free_y' ) +
+  theme_bw() +
+  labs(title = 'Selected Water Quality Parameters at 04101500 St. Joseph River at Niles, MI')
+
+
+rawNWISqwData %>% 
+  filter( samp_type_cd == '9' & medium_cd == 'WS') %>% 
+  filter( sample_dt > as.Date('2010-10-01') & site_no == '04165500' ) %>% 
+  select(sample_dt, parm_cd, result_va) %>% 
+  ggplot( aes( x = sample_dt, y = result_va, group = parm_cd)) +
+  geom_point() +
+  facet_wrap(~parm_cd, ncol = 1, scales = 'free_y' ) +
+  theme_bw() +
+  labs(title = 'Selected Water Quality Parameters at 04165500 Clinton River at Mt. Clemens, MI')
+
+
+```

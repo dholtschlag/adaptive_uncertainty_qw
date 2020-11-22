@@ -1,14 +1,15 @@
 ---
 title: "Retrieve QW Data"
 author: "David J Holtschlag"
-date: "11/20/2020"
+date: " `r format( Sys.Date(), '%A %B %d, %Y')` "
 output: html_document
 ---
 
 ```{r setup, include=FALSE}
 library(dataRetrieval)
 library(tidyverse)
-knitr::opts_chunk$set(echo = TRUE)
+fig_no <- 0
+knitr::opts_chunk$set(echo = FALSE)
 ```
 
 ## Retrieval of Water Quality Summaries for Clinton River and St. Joseph River
@@ -47,7 +48,7 @@ pmcodes <- pmcodes[tmp_ndx, ]
 
 ```
 
-## Inital Processing of Data Summaries to find High Frequency Parameters
+## Inital Processing of Data Summaries to find High Frequency (>200) Samples
 
 ```{r init_process}
 
@@ -76,46 +77,270 @@ Angela Brennan suggests that either turbidity or Specific conductance might be u
 
 
 
-```{r get_qw_data, }
+```{r get_qw_data}
 
 site_ids    <- c('04101500', '04165500')
 # Parameters:   SSC      Ortho-P  SC        Flow      Stage   H20_temp
 parameterCd <- c('80154', '00671', '00095', '00061', '00065', '00010')
 
-if( file.exists("data/rawNWISSqwData.RData")){
-  load("data/rawNWISqwData.RData")
+supp.labs   <- c('Suspended Sediment Concentration', 'Orthophosphate', 'Specific Conductance',
+                'Flow', 'Stage', 'H20 Temperature')
+
+names(supp.labs) <- c('80154', '00671', '00095', '00061', '00065', '00010')
+
+if( file.exists("data/NWISqwData.RData")){
+  load("data/NWISqwData.RData")
 } else{
 rawNWISqwData          <- readNWISqw(site_ids,parameterCd,reshape=FALSE)
-save(rawNWISqwData, file = "data/rawNWISqwData.RData")
+NWISqwData <- rawNWISqwData %>% 
+  filter( samp_type_cd == '9' & medium_cd == 'WS' & sample_dt > as.Date('2010-10-01') )
+  save(NWISqwData, file = "data/NWISqwData.RData")
+  rm(rawNWISqwData)
 }
+
+# # # OUTLIERS # # #
+# 04101500 00095 Specific Conductance <=25 seem to be an outlier: deleted
+# ndx_drop_sample <- which( rawNWISqwData$site_no == '04101500' & rawNWISqwData$parm_cd == '00095' & rawNWISqwData$result_va <= 30 )
+
 
 ```
 
 Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
 
+### QW time series at 04101500 St. Joseph River at Niles, Michigan
 
-```{r plot_series, fig.height= 20 }
+```{r plot_series_1015, fig.height= 20, fig.width = 9 }
 
-rawNWISqwData %>% 
-  filter( samp_type_cd == '9' & medium_cd == 'WS') %>% 
-  filter( sample_dt > as.Date('2010-10-01') & site_no == '04101500' ) %>% 
+new.lab <- as_labeller(c('80154' = '80154 Suspended Sediment Concentration', '00671' = '00671 Orthophosphate', 
+                         '00095' = '00095 Specific Conductance', '00061' = '00061 Flow', '00065' = '00065 Stage',
+                         '00010' = '00010 Water Temperature'))
+
+NWISqw1015 <- NWISqwData %>% filter( site_no == '04101500' ) 
+
+fig_no <- fig_no + 1
+
+NWISqw1015 %>% 
   select(sample_dt, parm_cd, result_va) %>% 
   ggplot( aes( x = sample_dt, y = result_va, group = parm_cd)) +
   geom_point() +
-  facet_wrap(~parm_cd, ncol = 1, scales = 'free_y' ) +
+  facet_wrap(~parm_cd, ncol = 1, scales = 'free_y', labeller = new.lab ) +
   theme_bw() +
-  labs(title = 'Selected Water Quality Parameters at 04101500 St. Joseph River at Niles, MI')
+  labs(title = paste0('Figure ',fig_no,'. Selected Water Quality Parameters at 04101500 St. Joseph River at Niles, MI'))
+
+```
+
+### Relation between specific conductance and suspended sediment concentration at 04101500
+
+```{r plot_SSC_relation_1015, fig.height = 6, fig.width = 8}
+ NWISqw <- NWISqw1015[, c('site_no', 'sample_dt', 'parm_cd', 'result_va')] %>% 
+  dplyr::filter( (parm_cd == '00095' | parm_cd == '80154'))  %>% 
+  mutate(date_parm = paste(sample_dt, parm_cd, sep = '_')) %>% 
+  group_by(date_parm) %>% summarize(result_mean = mean(result_va, na.rm = T), result_n = n(),
+                                    result_change  = (max(result_va) - min(result_va) )/result_mean * 100.) %>% 
+  select(date_parm, result_mean, result_n, result_change) %>% 
+  mutate(sample_dt = as.Date( substr(date_parm, 1, 10) ),
+         parm_cd   = as.character( substr(date_parm, 12, 16))) %>% 
+  select(sample_dt, parm_cd, result_n, result_mean, result_change) %>% 
+  pivot_wider( names_from = parm_cd, values_from = c( result_mean, result_change, result_n))
+  
+fig_no <- fig_no + 1
+
+NWISqw %>% 
+  mutate(change = pmax(result_change_00095,   result_change_80154) ) %>% 
+  ggplot( aes( x =     result_mean_00095, y = result_mean_80154, color = change )) +
+  geom_point(size = 1 / NWISqw$result_n_80154 ) +
+  scale_y_continuous( trans = 'sqrt') +
+  scale_x_continuous( trans = 'sqrt') +
+  theme_bw() +
+  theme( legend.position = 'bottom') +
+  xlab('Specific Conduction 00095') +
+  ylab('Suspended Sediment Concentration 80154') +
+  labs( title = paste0('Figure ', fig_no, ' Relation between specific conduction and suspended sediment concentration \n at 04101500 St. Joseph River at Niles, Michigan.'))
+```
 
 
-rawNWISqwData %>% 
-  filter( samp_type_cd == '9' & medium_cd == 'WS') %>% 
-  filter( sample_dt > as.Date('2010-10-01') & site_no == '04165500' ) %>% 
-  select(sample_dt, parm_cd, result_va) %>% 
-  ggplot( aes( x = sample_dt, y = result_va, group = parm_cd)) +
-  geom_point() +
-  facet_wrap(~parm_cd, ncol = 1, scales = 'free_y' ) +
+### Relation between specific conductance and orthophosphate concentration at 04101500
+
+```{r plot_PO4_relation_1015, fig.height = 6, fig.width = 8}
+
+NWISqw <- NWISqw1015[, c('site_no', 'sample_dt', 'parm_cd', 'result_va')] %>% 
+  dplyr::filter( (parm_cd == '00095' | parm_cd == '00671' | parm_cd == '00061') ) %>% 
+  mutate(date_parm = paste(sample_dt, parm_cd, sep = '_')) %>% 
+  group_by(date_parm) %>% summarize(result_mean = mean(result_va, na.rm = T), result_n = n(),
+                                    result_change  = (max(result_va) - min(result_va) )/result_mean * 100.) %>% 
+  select(date_parm, result_mean, result_n, result_change) %>% 
+  mutate(sample_dt = as.Date( substr(date_parm, 1, 10) ),
+         parm_cd   = as.character( substr(date_parm, 12, 16))) %>% 
+  select(sample_dt, parm_cd, result_n, result_mean, result_change) %>% 
+  pivot_wider( names_from = parm_cd, values_from = c( result_mean, result_change, result_n))
+
+fig_no <- fig_no + 1
+NWISqw %>% 
+  mutate(change = pmax(result_change_00095,   result_change_00671) ) %>% 
+  ggplot( aes( x =     result_mean_00095, y = result_mean_00671, color = change )) +
+  geom_point(size = 1 / NWISqw$result_n_00671 ) +
+  scale_y_continuous( trans = 'sqrt') +
+  scale_x_continuous( trans = 'sqrt') +
   theme_bw() +
-  labs(title = 'Selected Water Quality Parameters at 04165500 Clinton River at Mt. Clemens, MI')
+  theme( legend.position = 'bottom') +
+  xlab('Specific Conduction 00095') +
+  ylab('Orthophosphate 00671') +
+  labs( title = paste0('Figure ', fig_no, '. Relation between specific conduction and orthophosphate concentration \n at 04101500 St. Joseph River at Niles, Michigan.'))
+
+fig_no <- fig_no + 1
+NWISqw %>% 
+  mutate(change = pmax(result_change_00061,   result_change_00671) ) %>% 
+  ggplot( aes( x =     result_mean_00061, y = result_mean_00671, color = change )) +
+  geom_point(size = 1 / NWISqw$result_n_00671 ) +
+  scale_y_continuous( trans = 'sqrt') +
+  scale_x_continuous( trans = 'log10') +
+  theme_bw() +
+  theme( legend.position = 'bottom') +
+  xlab('Streamflow 00061') +
+  ylab('Orthophosphate 00671') +
+  labs( title = paste0('Figure ', fig_no, '. Relation between streamflow and orthophosphate concentration \n at 04101500 St. Joseph River at Niles, Michigan.'))
 
 
 ```
+
+## QW time series at 04165500 Clinton River at Mt. Clemens, Michigan
+
+```{r plot_series_1655, fig.height= 20, fig.width = 9}
+
+
+NWISqw1655 <- NWISqwData %>% filter( site_no == '04165500' ) 
+
+fig_no <- fig_no + 1
+NWISqw1655 %>% 
+  select(sample_dt, parm_cd, result_va) %>% 
+  ggplot( aes( x = sample_dt, y = result_va, group = parm_cd)) +
+  geom_point() +
+  facet_wrap(~parm_cd, ncol = 1, scales = 'free_y', labeller = new.lab  ) +
+  theme_bw() +
+  labs(title = paste0('Figure ', fig_no,'. Selected Water Quality Parameters at 04165500 Clinton River at Mt. Clemens, MI'))
+
+```
+
+### Relation between specific conductance and suspended sediment concentration at 04165500
+
+```{r plot_SSC_relation_1665, fig.height = 6, fig.width = 8}
+
+NWISqw <- NWISqw1655[, c('site_no', 'sample_dt', 'parm_cd', 'result_va')] %>% 
+  dplyr::filter( (parm_cd == '00095' | parm_cd == '80154' | parm_cd == '00061') ) %>% 
+  mutate(date_parm = paste(sample_dt, parm_cd, sep = '_')) %>% 
+  group_by(date_parm) %>% summarize(result_mean = mean(result_va, na.rm = T), result_n = n(),
+                                    result_change  = (max(result_va) - min(result_va) )/result_mean * 100.) %>% 
+  select(date_parm, result_mean, result_n, result_change) %>% 
+  mutate(sample_dt = as.Date( substr(date_parm, 1, 10) ),
+         parm_cd   = as.character( substr(date_parm, 12, 16))) %>% 
+  select(sample_dt, parm_cd, result_n, result_mean, result_change) %>% 
+  pivot_wider( names_from = parm_cd, values_from = c( result_mean, result_change, result_n))
+  
+fig_no <- fig_no + 1
+NWISqw %>% 
+  mutate(change = pmax(result_change_00095,   result_change_80154) ) %>% 
+  ggplot( aes( x =     result_mean_00095, y = result_mean_80154, color = change )) +
+  geom_point(size = 1 / NWISqw$result_n_80154 ) +
+  scale_y_continuous( trans = 'sqrt') +
+  scale_x_continuous( trans = 'sqrt') +
+  theme_bw() +
+  theme( legend.position = 'bottom') +
+  xlab('Specific Conduction 00095') +
+  ylab('Suspended Sediment Concentration 80154') +
+  labs( title = paste0('Figure ', fig_no, '. Relation between specific conduction and suspended sediment concentration \n at 04165500 Clinton River at Mt. Clemens, Michigan.'))
+
+fig_no <- fig_no + 1
+NWISqw %>% 
+  mutate(change = pmax(result_change_00061,   result_change_80154) ) %>% 
+  ggplot( aes( x =     result_mean_00061, y = result_mean_80154, color = change )) +
+  geom_point(size = 1 / NWISqw$result_n_80154 ) +
+  scale_y_continuous( trans = 'sqrt') +
+  scale_x_continuous( trans = 'sqrt') +
+  theme_bw() +
+  theme( legend.position = 'bottom') +
+  xlab('Streamflow 00061') +
+  ylab('Suspended Sediment Concentration 80154') +
+  labs( title = paste0('Figure ', fig_no, '. Relation between streamflow and suspended sediment concentration \n at 04165500 Clinton River at Mt. Clemens, Michigan.'))
+
+
+```
+
+### Relation between specific conductance and suspended sediment concentration at 04165500
+
+```{r plot_PO4_relation_1665, fig.height = 6, fig.width = 8}
+
+NWISqw <- NWISqw1655[, c('site_no', 'sample_dt', 'parm_cd', 'result_va')] %>% 
+  dplyr::filter( (parm_cd == '00095' | parm_cd == '00671' | parm_cd == '00061') ) %>% 
+  mutate(date_parm = paste(sample_dt, parm_cd, sep = '_')) %>% 
+  group_by(date_parm) %>% summarize(result_mean = mean(result_va, na.rm = T), result_n = n(),
+                                    result_change  = (max(result_va) - min(result_va) )/result_mean * 100.) %>% 
+  select(date_parm, result_mean, result_n, result_change) %>% 
+  mutate(sample_dt = as.Date( substr(date_parm, 1, 10) ),
+         parm_cd   = as.character( substr(date_parm, 12, 16))) %>% 
+  select(sample_dt, parm_cd, result_n, result_mean, result_change) %>% 
+  pivot_wider( names_from = parm_cd, values_from = c( result_mean, result_change, result_n))
+  
+fig_no <- fig_no + 1
+
+NWISqw %>% 
+  mutate(change = pmax(result_change_00095,   result_change_00671) ) %>% 
+  ggplot( aes( x =     result_mean_00095, y = result_mean_00671, color = change )) +
+  geom_point(size = 1 / NWISqw$result_n_00671 ) +
+  scale_y_continuous( trans = 'sqrt') +
+  scale_x_continuous( trans = 'sqrt') +
+  theme_bw() +
+  theme( legend.position = 'bottom') +
+  xlab('Specific Conduction 00095') +
+  ylab('Orthophosphate 00671') +
+  labs( title = paste0('Figure ', fig_no, '. Relation between specific conduction and orthophosphate concentration \n at 04165500 Clinton River at Mt. Clemens, Michigan.'))
+
+fig_no <- fig_no + 1
+
+NWISqw %>% 
+  mutate(change = pmax(result_change_00061,   result_change_00671) ) %>% 
+  ggplot( aes( x =     result_mean_00061, y = result_mean_00671, color = change )) +
+  geom_point(size = 1 / NWISqw$result_n_00671 ) +
+  scale_y_continuous( trans = 'sqrt') +
+  scale_x_continuous( trans = 'sqrt') +
+  theme_bw() +
+  theme( legend.position = 'bottom') +
+  xlab('Streamflow 00061') +
+  ylab('Orthophosphate 00671') +
+  labs( title = paste0('Figure ', fig_no, '. Relation between streamflow and orthophosphate concentration \n at 04165500 Clinton River at Mt. Clemens, Michigan.'))
+
+
+```
+
+### Compare probability densities at 04101500 and 01165500
+
+```{r compare_densities, fig.width = 8, fig.height = 5}
+NWISqw <- NWISqwData %>% filter( parm_cd == '80154') %>% 
+  select( site_no, sample_dt, parm_cd, result_va)
+
+fig_no <- fig_no + 1
+
+NWISqw %>% 
+  ggplot( aes( log10(result_va )) ) +
+  geom_density( aes(group = site_no, color = site_no ) ) +
+  theme_bw() +
+  xlab('Log10 Suspended Sediment Concentration') +
+  ylab('Probability Density') +
+  labs( title = paste0('Figure ', fig_no, '. Probability densities of Suspended Sediment Concentrations at \n04101500 St. Joseph River at Niles and 04165500 Clinton River at Mt. Clemens'))
+  
+NWISqw <- NWISqwData %>% filter( parm_cd == '00671') %>% 
+  select( site_no, sample_dt, parm_cd, result_va)
+
+fig_no <- fig_no + 1
+NWISqw %>% 
+  ggplot( aes( log10(result_va )) ) +
+  geom_density( aes(group = site_no, color = site_no ) ) +
+  theme_bw() +
+  xlab('Log10 Orthophosphate Concentration') +
+  ylab('Probability Density') +
+  labs( title = paste0('Figure ', fig_no, '. Probability densities of Orthophosphate Concentrations at \n04101500 St. Joseph River at Niles and 04165500 Clinton River at Mt. Clemens'))
+
+
+  
+```
+
+

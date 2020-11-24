@@ -12,9 +12,7 @@ fig_no <- 0
 knitr::opts_chunk$set(echo = FALSE)
 ```
 
-## Retrieval of Water Quality Summaries for Clinton River and St. Joseph River
-
-
+## Retrieval of Water Quality Summaries for 04101500 St. Joseph River at Niles, MI and 04165500 Clinton River at Mt. Clemens, MI 
 
 ```{r get_data_summary}
 
@@ -75,8 +73,6 @@ qw_summary_04165500_200 <- qw_summary_04165500_200[ ndx_keep, ]
 
 Angela Brennan suggests that either turbidity or Specific conductance might be used to estimate SSC or Ortho-P
 
-
-
 ```{r get_qw_data} 
 
 site_ids    <- c('04101500', '04165500')
@@ -97,10 +93,75 @@ NWISqwData <- rawNWISqwData %>%
   save(NWISqwData, file = "data/NWISqwData.RData")
   rm(rawNWISqwData)
 }
+```
 
-# # # OUTLIERS # # #
-# 04101500 00095 Specific Conductance <=25 seem to be an outlier: deleted
-# ndx_drop_sample <- which( rawNWISqwData$site_no == '04101500' & rawNWISqwData$parm_cd == '00095' & rawNWISqwData$result_va <= 30 )
+### Retrieve Unit Value Water-Quality Data and Compute Daily Values'
+
+This code uses the dataRetrieval package to access unit value water-quality data
+from 04101500 St. Joseph River at Niles, MI, from April 1, 2011 to September 30,
+2020. The unit data were generally obtained at 15-minute intervals forming a
+data set with 329,058 values on five water quality parameters along with flow
+and gage height (stage) data. Most unit GH value were missing. Daily means were
+computed from the unit values resulting in 3434 daily values. Means were
+computed as long as there was at least on measured unit value.
+
+```{r uv_dataRetrieval, eval = FALSE, fig.height = 20, fig.width = 9}
+
+# Retrieve Unit Value Data
+if( file.exists("data/rawNWISqw_UnitData.RData")){
+  load("data/rawNWISqwData.RData")
+} else{
+  # 'uv_temp_water, 'uv_flow', 'uv_stage', 'uv_SC', 'uv_DO', 'uv_pH', 'uv_turbidity'
+  uv_parm_cd <- c('00010', '00060', '00065', '00095', '00300', '00400', '63680')
+  rawNWISqw_UnitData  <- readNWISuv(siteNumbers = '04101500', parameterCd = uv_parm_cd,
+                                  startDate = '2011-04-01', endDate = '2020-09-30')
+  rawNWISqw_UnitData <- renameNWISColumns(rawNWISqw_UnitData)
+  NWISnames   <- colnames(rawNWISqw_UnitData)
+  newNames    <- str_replace(NWISnames, 'Inst', 'uv')
+  colnames(rawNWISqw_UnitData) <- newNames
+  save(rawNWISqw_UnitData, file = 'data/rawNWISqw_UnitData.RData')
+}
+
+# Aggregate unit to daily values, which reduces n from 329058 to 3434
+NWISqw_DayWide <- rawNWISqw_UnitData %>% 
+  filter( as.Date(dateTime) > as.Date('2011-04-01')) %>% 
+  group_by( as.Date(dateTime) ) %>% 
+  summarise(Wtemp_day    = mean(Wtemp_uv,    na.rm = TRUE),
+            Flow_day     = mean(Flow_uv,     na.rm = TRUE),
+            GH_day       = mean(GH_uv,       na.rm = TRUE),
+            SpecCond_day = mean(SpecCond_uv, na.rm = TRUE),
+            DO_day       = mean(DO_uv,       na.rm = TRUE),
+            pH_day       = mean(pH_uv,       na.rm = TRUE),
+            Turb_day     = mean(Turb_uv,     na.rm = TRUE))
+            # SpecCond_min = min(SpecCond_uv,  na.rm = TRUE),
+            # SpecCond_max = max(SpecCond_uv,  na.rm = TRUE))
+colnames(NWISqw_DayWide)[1] <- 'monitor_dt'
+
+save(NWISqw_DayWide, file = 'data/NWISqw_DayWide.RData')
+
+NWISqw_DayLong <- NWISqw_DayWide %>% 
+  pivot_longer(cols = Wtemp_day:Turb_day) 
+
+colnames(NWISqw_DayLong) <- c('Date', 'parameter', 'daily_mean')
+save(NWISqw_DayLong, file = 'data/NWISqw_DayLong.RData')
+
+```
+
+
+### Plot Daily Means of Continuous Data 
+
+```{r plot_daily_means, fig.height=20, fig.width = 9}
+
+load("data/NWISqw_DayLong.RData")
+
+fig_no <- fig_no + 1
+NWISqw_DayLong %>% 
+  ggplot( aes(x = Date, y = daily_mean, group = 'parameter')) +
+  geom_point( size = 0.5) +
+  facet_wrap( ~ parameter, ncol = 1, scales = 'free_y') +
+  theme_bw() +
+  labs(title = paste0('Figure ', fig_no, '. Time Series of Continuous Parameters at 04101500 St. Joseph River at Niles, MI'))
+  
 
 
 ```
@@ -156,6 +217,7 @@ NWISqw %>%
   xlab('Specific Conduction 00095') +
   ylab('Suspended Sediment Concentration 80154') +
   labs( title = paste0('Figure ', fig_no, ' Relation between specific conduction and suspended sediment concentration \n at 04101500 St. Joseph River at Niles, Michigan.'))
+
 ```
 
 
@@ -339,8 +401,46 @@ NWISqw %>%
   ylab('Probability Density') +
   labs( title = paste0('Figure ', fig_no, '. Probability densities of Orthophosphate Concentrations at \n04101500 St. Joseph River at Niles and 04165500 Clinton River at Mt. Clemens'))
 
-
-  
 ```
 
 
+### Compare discrete samples with continuous monitoring data
+
+Using water-quality data from site 04101500 St. Joseph River at Niles, compare discrete and continuous daily mean of specific conductance 
+
+```{r merge_discrete_daily_means}
+
+# Extracts a subset of variables and computes a mean for sample_dt & parm_cd dups
+NWISqwLong <- NWISqw1015[, c('site_no', 'sample_dt', 'parm_cd', 'result_va')] %>% 
+  group_by( sample_dt, parm_cd) %>% 
+  summarize(result_mean = mean(result_va, na.rm = T), result_n = n()) 
+
+
+NWISqwWide <- NWISqwLong %>% 
+  dplyr::select( sample_dt, parm_cd, result_mean ) %>% 
+  pivot_wider( names_from = parm_cd, values_from = result_mean )
+
+df <- data.frame( SpecCond_sample = c(332, 332), SpecCond_day = c(649, 664) )
+
+load('data/NWISqw_DayWide.RData')
+
+SC_sample_cont <- left_join(NWISqwWide[, c('sample_dt', '00095')], NWISqw_DayWide[,c('monitor_dt','SpecCond_day')],
+                            by = c('sample_dt' = 'monitor_dt'))
+colnames(SC_sample_cont)[2] <- 'SpecCond_sample'
+
+fig_no <- fig_no + 1
+SC_sample_cont %>% 
+  ggplot( aes( x = SpecCond_sample, y = SpecCond_day) ) +
+  geom_point() +
+  geom_segment(aes( x = df$SpecCond_sample[1], xend = df$SpecCond_sample[2],
+                    y = df$SpecCond_day[1]   , yend = df$SpecCond_day[2]), color = 'red') +
+  geom_abline( intercept = 0, slope = 1) +
+  theme_bw() +
+  xlab('Discrete measurement of Specific Conductance ') +
+  ylab('Daily mean of 15-minute specific conductance values') +
+  labs(title = paste0('Figure ', fig_no, '. Relation between discrete and daily mean of continuous specific \nconductance nvalues at 04101500 St. Joseph River at Niles, MI'))
+
+
+
+
+```

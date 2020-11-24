@@ -428,7 +428,7 @@ SC_sample_cont <- left_join(NWISqwWide[, c('sample_dt', '00095')], NWISqw_DayWid
                             by = c('sample_dt' = 'monitor_dt'))
 colnames(SC_sample_cont)[2] <- 'SpecCond_sample'
 
-fig_no <- fig_no + 1
+fig_no <- fig_no + 1 
 SC_sample_cont %>% 
   ggplot( aes( x = SpecCond_sample, y = SpecCond_day) ) +
   geom_point() +

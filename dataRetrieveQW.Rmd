@@ -416,7 +416,7 @@ NWISqwLong <- NWISqw1015[, c('site_no', 'sample_dt', 'parm_cd', 'result_va')] %>
   summarize(result_mean = mean(result_va, na.rm = T), result_n = n()) 
 
 
-NWISqwWide <- NWISqwLong %>% 
+NWISqwWide <- NWISqwLong %>%
   dplyr::select( sample_dt, parm_cd, result_mean ) %>% 
   pivot_wider( names_from = parm_cd, values_from = result_mean )
 

@@ -1,0 +1,200 @@
+---
+title: "GAM Modeling for site 04101500"
+author: "David J Holtschlag"
+date: "11/24/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(fitdistrplus)
+library(mgcv)
+library(lubridate)
+fig_no <- 0
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+## Load data sets
+
+See the dataRetrieveQW.Rmd file. Some data.frame names were changed for greater clarity. 
+
+```{r load_data}
+# Add discrete measurements
+load(file = "data/NWISqwData.RData")  # Has data for sites 04101500 and 04165500
+NWIS_disc      <- NWISqwData %>% filter( site_no == '04101500' )
+
+# The group_by command averages concentrations sampled more than once per day
+NWIS_disc_long <- NWIS_disc[, c('site_no', 'sample_dt', 'parm_cd', 'result_va')] %>% 
+  group_by( sample_dt, parm_cd) %>% 
+  summarize(result_mean = mean(result_va, na.rm = T), result_n = n(),
+            .groups = 'drop') 
+
+# 
+NWIS_disc_wide <- NWIS_disc_long %>%
+  dplyr::select( sample_dt, parm_cd, result_mean ) %>% 
+  pivot_wider( names_from = parm_cd, values_from = result_mean )
+
+
+# Add continuous measurements
+load(file = 'data/NWISqw_DayWide.RData')
+NWIS_daily_wide <- NWISqw_DayWide
+
+load(file = 'data/NWISqw_DayLong.RData')
+NWIS_daily_long <- NWISqw_DayLong
+
+rm('NWISqw_DayWide', 'NWISqw_DayLong')
+
+# SC_sample_cont <- left_join(NWISqwWide[, c('sample_dt', '00095')], NWISqw_DayWide[,c('monitor_dt','SpecCond_day')],
+#                            by = c('sample_dt' = 'monitor_dt'))
+# colnames(SC_sample_cont)[2] <- 'SpecCond_sample'
+
+```
+
+## Distribution of Discrete Suspended Sediment Concentrations
+
+The gamma and normal distributions were fit to the natural logarithms of suspended sediment concentration and plotted in figure 1. The AIC and BIC statistics indicate that the gamma distribution may fit slightly better, but the parameter correlation in the gamma fit are high.   
+
+```{r dist_ssc}
+
+# Parameters and NWIS codes: Note that Flow:00061 is instantaneous flow, in cfs
+#   SSC is suspended sediment concentration
+# Parm:codes SSC:80154 Ortho-P:00671 SC:00095 Flow:00061 Stage:00065 H20_temp:00010
+
+colnames(NWIS_disc_wide)[2:7] <- c('H20_temp', 'Flow_inst', 'Stage', 'SpecCond', 
+                                   'Ortho_P', 'SuspSedi')
+
+df <- data.frame(x = log(NWIS_disc_wide$SuspSedi[!is.na(NWIS_disc_wide$SuspSedi)]))
+
+fit.lgamma <- fitdist(df$x, distr = "gamma", method = "mle")
+summary(fit.lgamma)
+
+fit.lnorm  <- fitdist(df$x, distr = "norm",  method = "mle")
+summary(fit.lnorm)
+
+fig_no <- fig_no + 1
+df %>% 
+  ggplot( aes( x ) ) +
+  geom_density( color = 'blue') +
+  stat_function(fun = function(x) {dgamma(x, 
+                                          shape = fit.lgamma$estimate[[1]],
+                                          rate  = fit.lgamma$estimate[[2]])},
+                color = 'forestgreen') +
+  stat_function(fun = function(x) {dnorm(x, 
+                                          mean  = fit.lnorm$estimate[[1]],
+                                          sd    = fit.lnorm$estimate[[2]])},
+                color = 'red') +
+  theme_bw() +
+  # scale_x_continuous( trans = 'log') +
+  xlab( 'Natural logarithm of suspended sediment concentration, in mg/L') +
+  ylab( 'Probability density') +
+  annotate('text', x =  4, y = 0.40, label = 'Emperical distribution', color = 'blue'   , hjust = 0) +
+  annotate('text', x =  4, y = 0.37, label = 'Gamma distribution', color = 'forestgreen', hjust = 0) +
+  annotate('text', x =  4, y = 0.34, label = 'Normal distribution', color = 'red', hjust = 0) +
+  labs( title = paste0('Figure ', fig_no, '. Empirical and Fitted Theoretical Distributions of Suspended Sediment \nConcentration at 04101500 St. Joseph River at Niles, MI'))
+
+
+
+```
+
+## Relation between suspended sediment concentration and continuously measureable parameters
+
+
+
+```{r join_disc_daily, warning= FALSE}
+SuspSedi_aug <- left_join( NWIS_disc_wide[, c('sample_dt', 'SuspSedi')], NWIS_daily_wide,
+                           by = c('sample_dt' = 'monitor_dt'))
+
+fig_no <- fig_no + 1
+SuspSedi_aug %>% 
+  ggplot( aes( x = SuspSedi, y = Wtemp_day )) +
+  geom_point() +
+  scale_x_continuous( trans = 'log', breaks = c(2, 4, 8, 16, 32, 64, 128)  ) +
+  scale_y_continuous( ) +
+  theme_bw() +
+  xlab( 'Suspended Sediment Concentration, in mg/L') +
+  ylab( 'Water Temperature, in degrees Celcius') +
+  labs( title = paste0('Figure ', fig+no, '. Relation between suspended sediment concentrations and water temperatures.' ))
+
+fig_no <- fig_no + 1
+SuspSedi_aug %>% 
+  ggplot( aes( x = SuspSedi, y = Flow_day )) +
+  geom_point() +
+  scale_x_continuous( trans = 'log10', breaks = c(2, 4, 8, 16, 32, 64, 128)  ) +
+  scale_y_continuous( trans = 'log10') +
+  geom_smooth( method = 'lm', formula = y ~ x ) +
+  theme_bw() +
+  xlab( 'Suspended Sediment Concentration, in mg/L') +
+  ylab( 'Streamflow, in cubic feet per second')
+
+fig_no <- fig_no + 1
+SuspSedi_aug %>% 
+  ggplot( aes( x = SuspSedi, y = SpecCond_day )) +
+  geom_point() +
+  scale_x_continuous( trans = 'log10', breaks = c(2, 4, 8, 16, 32, 64, 128)  ) +
+  scale_y_continuous( trans = 'identity') +
+  geom_smooth( method = 'lm' , formula = y ~ x ) +
+  theme_bw() +
+  xlab( 'Suspended Sediment Concentration, in mg/L') +
+  ylab( 'Specific Conductance, in microsiemens per centimeter at 25 degrees Celsius')
+
+fig_no <- fig_no + 1
+SuspSedi_aug %>% 
+  ggplot( aes( x = SuspSedi, y = DO_day )) +
+  geom_point() +
+  scale_x_continuous( trans = 'log10', breaks = c(2, 4, 8, 16, 32, 64, 128)  ) +
+  scale_y_continuous( trans = 'identity') +
+  theme_bw() +
+  xlab( 'Suspended Sediment Concentration, in mg/L') +
+  ylab( 'Dissolved Oxygen, in mg/L')
+
+fig_no <- fig_no + 1
+SuspSedi_aug %>% 
+  ggplot( aes( x = SuspSedi, y = pH_day )) +
+  geom_point() +
+  scale_x_continuous( trans = 'log10', breaks = c(2, 4, 8, 16, 32, 64, 128)  ) +
+  scale_y_continuous( trans = 'identity') +
+  theme_bw() +
+  xlab( 'Suspended Sediment Concentration, in mg/L') +
+  ylab( 'pH units')
+
+fig_no <- fig_no + 1
+SuspSedi_aug %>% 
+  ggplot( aes( x = SuspSedi, y = Turb_day )) +
+  geom_point() +
+  scale_x_continuous( trans = 'log10', breaks = c(2, 4, 8, 16, 32, 64, 128)  ) +
+  scale_y_continuous( trans = 'log10') +
+  geom_smooth( method = 'lm', formula = y ~ x ) +
+  theme_bw() +
+  xlab( 'Suspended Sediment Concentration, in mg/L') +
+  ylab( 'Turbidity, in formazin nephelometric units (FNU)')
+
+fig_no <- fig_no + 1
+SuspSedi_aug %>% 
+  ggplot( aes( x = Flow_day, y = Turb_day )) +
+  geom_point() +
+  scale_x_continuous( trans = 'log10', breaks = c(2, 4, 8, 16, 32, 64, 128)  ) +
+  scale_y_continuous( trans = 'log10') +
+  geom_smooth( method = 'lm', formula = y ~ x) +
+  theme_bw() +
+  xlab( 'Streamflow, in cubic feet per second') +
+  ylab( 'Turbidity, in formazin nephelometric units (FNU)')
+
+
+```
+
+## 
+
+
+
+
+```{r lm_model}
+
+SuspSedi_aug$frac_of_year <- if_else(leap_year(SuspSedi_aug$sample_dt) == TRUE, 
+                                     yday(SuspSedi_aug$sample_dt)/366, 
+                                     yday(SuspSedi_aug$sample_dt)/365)
+
+gam_02 <- gam( SuspSedi ~ log10(Turb_day) + s(frac_of_year, bs = 'cc'), data = SuspSedi_aug,
+               family = Gamma(link = log))
+
+
+```
